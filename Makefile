@@ -3,7 +3,7 @@
 # notes:
 # 'target: | target1 target2' syntax enforces the exact order
 
-.PHONY: bump bump-dev bump-major bump-major-dev bump-minor bump-minor-dev bump-post-release clean clean-build clean-build-conda clean-build-pypi clean-conda clean-pyc clean-pyc-conda clean-pyc-pypi clean-pypi clean-test clean-test-conda clean-test-pypi commit-release-push commit-tag dist-conda dist-pypi dist-pypi-bdist dist-pypi-sdist docs git-not-dirty git-pull help release tag-version-push test test-install-conda test-installtest-install-pyp upload upload-conda upload-pypi
+.PHONY: bump bump-dev bump-major bump-major-dev bump-minor bump-minor-dev bump-post-release clean clean-build clean-build-conda clean-build-pypi clean-conda clean-pyc clean-pyc-conda clean-pyc-pypi clean-pypi clean-test clean-test-conda clean-test-pypi commit-release-push commit-hotfix-push commit-tag dist-conda dist-pypi dist-pypi-bdist dist-pypi-sdist docs sanity-check git-pull help release tag-version-push test test-cpu test-install-conda test-install test-install-pyp upload upload-conda upload-pypi install-conda-local git-clean-check sanity-check-hotfix release-hotfix
 
 define get_cur_branch
 $(shell git branch | sed -n '/\* /s///p')
@@ -147,7 +147,9 @@ upload-conda: ## upload conda package
 	@echo "\n\n*** Uploading" conda-dist/noarch/*tar.bz2 "to fastai@anaconda.org\n"
 	anaconda upload conda-dist/noarch/*tar.bz2 -u fastai
 
-
+install-conda-local: ## install the locally built conda package
+	@echo "\n\n*** Installing the local build of" conda-dist/noarch/*tar.bz2
+	conda install -y -c ./conda-dist/ -c fastai fastai==$(version)
 
 ##@ Combined (pip and conda)
 
@@ -166,32 +168,65 @@ install: clean ## install the package to the active python's site-packages
 test: ## run tests with the default python
 	python setup.py --quiet test
 
+test-fast: ## run tests in parallel (requires pip install pytest-xdist)
+	pytest -n 3
+
+test-full: ## run all tests, including slow ones, print summary
+	pytest --runslow -ra
+
+test-cpu: ## run tests with the default python and CUDA_VISIBLE_DEVICES=""
+	CUDA_VISIBLE_DEVICES="" python setup.py --quiet test
+
 tools-update: ## install/update build tools
 	@echo "\n\n*** Updating build tools"
 	conda install -y conda-verify conda-build anaconda-client
 	pip install -U twine
 
+docs: ## update docs
+	tools/build-docs -f
+
+log_file := release-`date +"%Y-%m-%d-%H-%M-%S"`.log
 release: ## do it all (other than testing)
-	${MAKE} tools-update
-	${MAKE} master-branch-switch
-	${MAKE} git-not-dirty
-	${MAKE} test
-	${MAKE} bump
-	${MAKE} changes-finalize
-	${MAKE} release-branch-create
-	${MAKE} commit-version
-	${MAKE} master-branch-switch
-	${MAKE} bump-dev
-	${MAKE} changes-dev-cycle
-	${MAKE} commit-dev-cycle-push
-	${MAKE} prev-branch-switch
-	${MAKE} commit-release-push
-	${MAKE} tag-version-push
-	${MAKE} dist
-	${MAKE} upload
-	${MAKE} test-install
-	${MAKE} backport-check
-	${MAKE} master-branch-switch
+	@echo "\n\n*** logging to $(log_file)"
+	( \
+	${MAKE} tools-update && \
+	${MAKE} master-branch-switch && \
+	${MAKE} sanity-check && \
+	${MAKE} test && \
+	${MAKE} bump && \
+	${MAKE} changes-finalize && \
+	${MAKE} release-branch-create && \
+	${MAKE} commit-version && \
+	${MAKE} master-branch-switch && \
+	${MAKE} bump-dev && \
+	${MAKE} changes-dev-cycle && \
+	${MAKE} commit-dev-cycle-push && \
+	${MAKE} prev-branch-switch && \
+	${MAKE} commit-release-push && \
+	${MAKE} tag-version-push && \
+	${MAKE} dist && \
+	${MAKE} upload && \
+	${MAKE} test-install && \
+	${MAKE} backport-check && \
+	${MAKE} master-branch-switch && \
+	echo "Done" \
+	) 2>&1 | tee $(log_file)
+
+log_file_hotfix := release-hotfix-`date +"%Y-%m-%d-%H-%M-%S"`.log
+release-hotfix: ## do most of the hotfix release process
+	@echo "\n\n*** logging to $(log_file)"
+	( \
+	${MAKE} sanity-check-hotfix && \
+	${MAKE} test && \
+	${MAKE} bump-post-release && \
+	${MAKE} commit-hotfix-push && \
+	${MAKE} tag-version-push && \
+	${MAKE} dist && \
+	${MAKE} upload && \
+	${MAKE} test-install && \
+	${MAKE} master-branch-switch && \
+	echo "Done" \
+	) 2>&1 | tee $(log_file_hotfix)
 
 ##@ git helpers
 
@@ -201,8 +236,8 @@ git-pull: ## git pull
 	git pull
 	git status
 
-git-not-dirty:
-	@echo "*** Checking that everything is committed"
+git-clean-check:
+	@echo "\n\n*** Checking that everything is committed"
 	@if [ -n "$(shell git status -s)" ]; then\
 		echo "git status is not clean. You have uncommitted git files";\
 		exit 1;\
@@ -210,15 +245,29 @@ git-not-dirty:
 		echo "git status is clean";\
     fi
 
+git-check-remote-origin-url:
+	@echo "\n\n*** Checking `git config --get remote.origin.url`"
+	@perl -le '$$_=shift; $$u=q[git@github.com:fastai/fastai.git]; $$_ eq $$u ? print "Correct $$_" : die "Expecting $$u, got $$_"' $(shell git config --get remote.origin.url)
+
+sanity-check: git-clean-check git-check-remote-origin-url
+	@echo "\n\n*** Checking master branch version: should always be: X.Y.Z.dev0"
+	@perl -le '$$_=shift; $$v="initial version: $$_"; /\.dev0$$/ ? print "Good $$v" : die "Bad $$v, expecting .dev0"' $(version)
+
+sanity-check-hotfix: git-clean-check git-check-remote-origin-url
+	@echo "\n\n*** Checking branch name: expecting release-X.Y.Z"
+	@perl -le '$$_=shift; $$br="current branch: $$_"; /^release-\d+\.\d+\.\d+/ ? print "Good $$br" : die "Bad $$br, expecting release-X.Y.Z"' $(cur_branch)
+
 prev-branch-switch:
 	@echo "\n\n*** [$(cur_branch)] Switching to prev branch"
 	git checkout -
 	$(call echo_cur_branch)
 
+# also do a special sanity check for broken git setups that switch to private fork on branch
 release-branch-create:
 	@echo "\n\n*** [$(cur_branch)] Creating release-$(version) branch"
 	git checkout -b release-$(version)
 	$(call echo_cur_branch)
+	$(MAKE) git-check-remote-origin-url
 
 release-branch-switch:
 	@echo "\n\n*** [$(cur_branch)] Switching to release-$(version) branch"
@@ -230,17 +279,24 @@ master-branch-switch:
 	git checkout master
 	$(call echo_cur_branch)
 
+commit-version: ## commit and tag the release
+	@echo "\n\n*** [$(cur_branch)] Start release branch: $(version)"
+	git commit -m "starting release branch: $(version)" $(version_file)
+	$(call echo_cur_branch)
+
+# in case someone managed to push something into master since this process
+# started, it's now safe to git pull (which would avoid the merge error and
+# break 'make release'), as we are no longer on the release branch and new
+# pulled changes won't affect the release branch
 commit-dev-cycle-push: ## commit version and CHANGES and push
+	@echo "\n\n*** [$(cur_branch)] pull before commit to avoid interactive merges"
+	git pull
+
 	@echo "\n\n*** [$(cur_branch)] Start new dev cycle: $(version)"
 	git commit -m "new dev cycle: $(version)" $(version_file) CHANGES.md
 
 	@echo "\n\n*** [$(cur_branch)] Push changes"
 	git push
-
-commit-version: ## commit and tag the release
-	@echo "\n\n*** [$(cur_branch)] Start release branch: $(version)"
-	git commit -m "starting release branch: $(version)" $(version_file)
-	$(call echo_cur_branch)
 
 commit-release-push: ## commit CHANGES.md, push/set upstream
 	@echo "\n\n*** [$(cur_branch)] Commit CHANGES.md"
@@ -249,11 +305,16 @@ commit-release-push: ## commit CHANGES.md, push/set upstream
 	@echo "\n\n*** [$(cur_branch)] Push changes"
 	git push --set-upstream origin release-$(version)
 
+commit-hotfix-push: ## commit version and CHANGES and push
+	@echo "\n\n*** [$(cur_branch)] Complete hotfix: $(version)"
+	git commit -m "hotfix: $(version)" $(version_file) CHANGES.md
+
+	@echo "\n\n*** [$(cur_branch)] Push changes"
+	git push
+
 tag-version-push: ## tag the release
 	@echo "\n\n*** [$(cur_branch)] Tag $(version) version"
 	git tag -a $(version) -m "$(version)" && git push origin tag $(version)
-
-
 
 # check whether there any commits besides fastai/version.py and CHANGES.md
 # from the point of branching of release-$(version) till its HEAD. If
@@ -318,7 +379,7 @@ changes-finalize: ## fix the version and stamp the date
 
 changes-dev-cycle: ## insert new template + version
 	@echo "\n\n*** [$(cur_branch)] Install new template + version in CHANGES.md"
-	perl -0777 -pi -e 's|^(##)|\n\n## $(version) (Work In Progress)\n\n### New:\n\n### Changed:\n\n### Fixed:\n\n\n\n$$1|ms' CHANGES.md
+	perl -0777 -pi -e 's|^(##)|## $(version) (Work In Progress)\n\n### New:\n\n### Changed:\n\n### Fixed:\n\n\n\n$$1|ms' CHANGES.md
 
 
 ##@ Version bumping
