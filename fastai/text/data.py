@@ -158,6 +158,7 @@ class TextDataBunch(DataBunch):
         if not is1d(train_lbls): src.train.y.one_hot,src.valid.y.one_hot = True,True
         if test_ids is not None: src.add_test(TextList(test_ids, vocab, path=path), label=train_lbls[0])
         src.valid.x.processor = ifnone(processor, [TokenizeProcessor(), NumericalizeProcessor(vocab=vocab)])
+        if classes is not None: src.valid.y.processor = ifnone(processor, [CategoryProcessor(src.valid.y)])
         return src.databunch(**kwargs)
 
     @classmethod
@@ -322,7 +323,7 @@ class TextList(ItemList):
     def __init__(self, items:Iterator, vocab:Vocab=None, pad_idx:int=1, sep=' ', **kwargs):
         super().__init__(items, **kwargs)
         self.vocab,self.pad_idx,self.sep = vocab,pad_idx,sep
-        self.copy_new += ['vocab', 'pad_idx']
+        self.copy_new += ['vocab', 'pad_idx', 'sep']
 
     def get(self, i):
         o = super().get(i)
