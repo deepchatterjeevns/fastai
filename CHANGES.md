@@ -11,9 +11,31 @@ Github. Parentheses after an item show the name or github id of the contributor
 of that change.
 
 
-## 1.0.56.dev0 (Work In Progress)
+## 1.0.58.dev0 (Work In Progress)
 
 ### New:
+
+### Changed:
+
+### Fixed:
+
+
+
+## 1.0.57 (2019-08-09)
+
+### New:
+
+### Changed:
+
+### Fixed:
+
+
+
+## 1.0.56 (2019-08-06)
+
+### New:
+
+- QRNNs now work in mixed precision and can be twice as fast on a moderen GPU (if all dims are nultiples of 8)
 
 ### Changed:
 

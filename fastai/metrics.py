@@ -32,7 +32,7 @@ def accuracy(input:Tensor, targs:Tensor)->Rank0Tensor:
 def accuracy_thresh(y_pred:Tensor, y_true:Tensor, thresh:float=0.5, sigmoid:bool=True)->Rank0Tensor:
     "Computes accuracy when `y_pred` and `y_true` are the same size."
     if sigmoid: y_pred = y_pred.sigmoid()
-    return ((y_pred>thresh)==y_true.byte()).float().mean()
+    return ((y_pred>thresh).byte()==y_true.byte()).float().mean()
 
 def top_k_accuracy(input:Tensor, targs:Tensor, k:int=5)->Rank0Tensor:
     "Computes the Top-k accuracy (target is in the top k predictions)."
@@ -55,10 +55,12 @@ def dice(input:Tensor, targs:Tensor, iou:bool=False, eps:float=1e-8)->Rank0Tenso
     n = targs.shape[0]
     input = input.argmax(dim=1).view(n,-1)
     targs = targs.view(n,-1)
-    intersect = (input * targs).sum().float()
-    union = (input+targs).sum().float()
-    if not iou: return (2. * intersect / union if union > 0 else union.new([1.]).squeeze())
-    else: return (intersect / (union-intersect+eps) if union > 0 else union.new([1.]).squeeze())
+    intersect = (input * targs).sum(dim=1).float()
+    union = (input+targs).sum(dim=1).float()
+    if not iou: l = 2. * intersect / union
+    else: l = intersect / (union-intersect+eps)
+    l[union == 0.] = 1.
+    return l.mean()
 
 def psnr(input:Tensor, targs:Tensor)->Rank0Tensor:
     return 10 * (1. / mean_squared_error(input, targs)).log10()
